@@ -23,7 +23,6 @@ use std::sync::atomic::AtomicUsize;
 
 use anyhow::{Ok, Result};
 use bytes::Bytes;
-use clap::builder::NonEmptyStringValueParser;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 
 use crate::block::Block;
@@ -31,6 +30,7 @@ use crate::compact::{
     CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
+use crate::iterators::merge_iterator::MergeIterator;
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
 use crate::mem_table::MemTable;
@@ -381,10 +381,13 @@ impl LsmStorageInner {
         let new_memtable = Arc::new(MemTable::create(self.next_sst_id()));
         {
             let mut guard = self.state.write();
+            // let old_memtable = guard.memtable.clone();
+            // guard.deref_mut().memtable = new_memtable;
+            // guard.deref_mut().imm_memtables.insert(0, old_memtable);
             let mut snapshot = guard.as_ref().clone();
-            let old_memtable = std::mem::replace(&mut snapshot.memtable, new_memtable.clone());
+            let old_memtable = std::mem::replace(&mut snapshot.memtable, new_memtable);
             snapshot.imm_memtables.insert(0, old_memtable);
-            // update snaoshot
+            // update snapshot
             *guard = Arc::new(snapshot);
         }
 
@@ -407,6 +410,18 @@ impl LsmStorageInner {
         _lower: Bound<&[u8]>,
         _upper: Bound<&[u8]>,
     ) -> Result<FusedIterator<LsmIterator>> {
-        unimplemented!()
+        let snapshot = {
+            let guard = self.state.read();
+            Arc::clone(&guard)
+        };
+        let mut memtable_iters = Vec::with_capacity(snapshot.imm_memtables.len() + 1);
+        memtable_iters.push(Box::new(snapshot.memtable.scan(_lower, _upper)));
+        for memtable in snapshot.imm_memtables.iter() {
+            memtable_iters.push(Box::new(memtable.scan(_lower, _upper)));
+        }
+
+        Ok(FusedIterator::new(LsmIterator::new(
+            MergeIterator::create(memtable_iters),
+        )?))
     }
 }
