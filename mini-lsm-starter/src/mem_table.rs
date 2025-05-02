@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use anyhow::{Ok, Result};
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use crossbeam_skiplist::SkipMap;
 use ouroboros::self_referencing;
 
@@ -187,11 +187,11 @@ impl StorageIterator for MemTableIterator {
     type KeyType<'a> = KeySlice<'a>;
 
     fn value(&self) -> &[u8] {
-        &self.borrow_item().1[..]
+        self.borrow_item().1.chunk()
     }
 
     fn key(&self) -> KeySlice {
-        KeySlice::from_slice(&self.borrow_item().0[..])
+        KeySlice::from_slice(self.borrow_item().0.chunk())
     }
 
     fn is_valid(&self) -> bool {
@@ -203,5 +203,4 @@ impl StorageIterator for MemTableIterator {
         self.with_item_mut(|item| *item = next_item);
         Ok(())
     }
-
 }
