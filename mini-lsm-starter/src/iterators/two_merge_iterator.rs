@@ -15,6 +15,8 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
+use std::io::Seek;
+
 use anyhow::Result;
 
 use super::StorageIterator;
@@ -105,5 +107,9 @@ impl<
         self.skip_b()?;
         self.choose_a = Self::choose_a(&self.a, &self.b);
         Ok(())
+    }
+
+    fn num_active_iterators(&self) -> usize {
+        self.a.num_active_iterators() + self.b.num_active_iterators()
     }
 }
