@@ -15,7 +15,7 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
-use bytes::{Buf, BufMut};
+use bytes::BufMut;
 
 use crate::key::{KeySlice, KeyVec};
 
@@ -48,6 +48,20 @@ impl BlockBuilder {
         2 + self.offsets.len() * 2 + self.data.len()
     }
 
+    fn compute_overlap(first_key: KeySlice, key: KeySlice) -> usize {
+        let mut i = 0;
+        loop {
+            if i >= first_key.len() || i >= key.len() {
+                break;
+            }
+            if first_key.raw_ref()[i] != key.raw_ref()[i] {
+                break;
+            }
+            i += 1;
+        }
+        i
+    }
+
     /// Adds a key-value pair to the block. Returns false when the block is full.
     #[must_use]
     pub fn add(&mut self, key: KeySlice, value: &[u8]) -> bool {
@@ -56,11 +70,24 @@ impl BlockBuilder {
         {
             return false;
         }
+        // compute overlap part length
+        let overlap_len = Self::compute_overlap(self.first_key.as_key_slice(), key);
+        // encode offset
         self.offsets.push(self.data.len() as u16);
-        self.data.put_u16(key.raw_ref().len() as u16);
-        self.data.put(key.raw_ref().chunk());
+        // encode overlap length
+        self.data.put_u16(overlap_len as u16);
+        // encode not-overlap length
+        self.data.put_u16((key.len() - overlap_len) as u16);
+        // encode not-overlap part
+        self.data.put(&key.raw_ref()[overlap_len..]);
+        // encode value len
         self.data.put_u16(value.len() as u16);
+        // encode value
         self.data.put(value);
+
+        if self.first_key.is_empty() {
+            self.first_key = key.to_key_vec();
+        }
 
         true
     }

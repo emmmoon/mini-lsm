@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 pub(crate) mod bloom;
 mod builder;
 mod iterator;
@@ -139,7 +136,15 @@ impl SsTable {
 
     /// Open SSTable from a file.
     pub fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
-        let len = file.1;
+        let mut len = file.1;
+        // decode the bloom
+        let bloom_offset = (&file.read(len - 4, 4)?[..]).get_u32() as u64;
+        let bloom_len = (len - bloom_offset - 4) as u64;
+        let bloom_block = &file.read(bloom_offset, bloom_len)?[..];
+        let bloom = Bloom::decode(bloom_block)?;
+        len = bloom_offset;
+
+        // decode the metadata
         let block_meta_offset = (&file.read(len - 4, 4)?[..]).get_u32();
         let meta_len = len - 4 - block_meta_offset as u64;
         let meta_block = &file.read(block_meta_offset as u64, meta_len)?[..];
@@ -155,7 +160,7 @@ impl SsTable {
             block_cache: block_cache,
             first_key: first_key,
             last_key: last_key,
-            bloom: None,
+            bloom: Some(bloom),
             max_ts: 0,
         })
     }
