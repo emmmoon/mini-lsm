@@ -31,6 +31,7 @@ use crate::compact::{
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
 use crate::iterators::StorageIterator;
+use crate::iterators::concat_iterator::SstConcatIterator;
 use crate::iterators::merge_iterator::MergeIterator;
 use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::key::KeySlice;
@@ -214,7 +215,27 @@ impl Drop for MiniLsm {
 
 impl MiniLsm {
     pub fn close(&self) -> Result<()> {
-        unimplemented!()
+        self.flush_notifier.send(()).ok();
+
+        let mut flush_thread = self.flush_thread.lock();
+        if let Some(flush_thread) = flush_thread.take() {
+            flush_thread
+                .join()
+                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        }
+
+        if !self.inner.state.read().memtable.is_empty() {
+            self.inner
+                .force_freeze_memtable(&self.inner.state_lock.lock())?;
+        }
+
+        while {
+            let snapshot = self.inner.state.read();
+            !snapshot.imm_memtables.is_empty()
+        } {
+            self.inner.force_flush_next_imm_memtable()?;
+        }
+        Ok(())
     }
 
     /// Start the storage engine by either loading an existing directory or creating a new one if the directory does
@@ -397,6 +418,29 @@ impl LsmStorageInner {
             return Ok(Some(Bytes::copy_from_slice(l0_merge_iter.value())));
         }
 
+        let mut l1_sst = vec![];
+        for table in snapshot.levels[0].1.iter() {
+            let table = snapshot.sstables[table].clone();
+            if table.bloom.is_some()
+                && !table
+                    .bloom
+                    .as_ref()
+                    .unwrap()
+                    .may_contain(farmhash::fingerprint32(_key))
+            {
+                continue;
+            }
+            l1_sst.push(table.clone());
+        }
+        let l1_iter =
+            SstConcatIterator::create_and_seek_to_key(l1_sst, KeySlice::from_slice(_key))?;
+        if l1_iter.is_valid() && l1_iter.key().raw_ref() == _key {
+            if l1_iter.value().is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(Bytes::copy_from_slice(l1_iter.value())));
+        }
+
         Ok(None)
     }
 
@@ -567,6 +611,13 @@ impl LsmStorageInner {
         let merge_memtable_iters = MergeIterator::create(memtable_iters);
 
         let iter = TwoMergeIterator::create(merge_memtable_iters, l0_iters)?;
+
+        let mut l1_sst = Vec::with_capacity(snapshot.levels[0].1.len());
+        for &sst_id in snapshot.levels[0].1.iter() {
+            l1_sst.push(snapshot.sstables[&sst_id].clone());
+        }
+        let l1_iter = SstConcatIterator::create_and_seek_to_first(l1_sst)?;
+        let iter = TwoMergeIterator::create(iter, l1_iter)?;
 
         Ok(FusedIterator::new(LsmIterator::new(
             iter,

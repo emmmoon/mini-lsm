@@ -547,6 +547,7 @@ impl LsmStorageInner {
 
         if iter.is_valid() && iter.key().raw_ref() == key && !iter.value().is_empty() {
             return Ok(Some(Bytes::copy_from_slice(iter.value())));
+            
         }
         Ok(None)
     }
