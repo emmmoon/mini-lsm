@@ -56,7 +56,7 @@ impl Block {
         let data = data[..(data.len() - 2 - num_of_elements * 2)].to_vec();
 
         Self {
-            data: data,
+            data,
             offsets: offset,
         }
     }

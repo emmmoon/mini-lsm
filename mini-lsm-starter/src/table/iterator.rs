@@ -55,8 +55,8 @@ impl SsTableIterator {
             blk_iter = BlockIterator::create_and_seek_to_key(table.read_block_cached(index)?, key);
         }
         Ok(Self {
-            table: table,
-            blk_iter: blk_iter,
+            table,
+            blk_iter,
             blk_idx: index,
         })
     }

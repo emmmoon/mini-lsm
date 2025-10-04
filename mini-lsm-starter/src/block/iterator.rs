@@ -45,7 +45,7 @@ impl BlockIterator {
             key: KeyVec::new(),
             value_range: (0, 0),
             idx: 0,
-            first_key: first_key,
+            first_key,
         }
     }
 

@@ -36,6 +36,7 @@ use crate::iterators::merge_iterator::MergeIterator;
 use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::key::KeySlice;
 use crate::lsm_storage::{LsmStorageInner, LsmStorageState};
+use crate::manifest::ManifestRecord;
 use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -366,6 +367,11 @@ impl LsmStorageInner {
         for sst in ssts_to_remove {
             std::fs::remove_file(self.path_of_sst(sst.sst_id()))?;
         }
+        self.manifest.as_ref().unwrap().add_record(
+            &self.state_lock.lock(),
+            ManifestRecord::Compaction(task, output),
+        )?;
+        self.sync_dir()?;
         Ok(())
     }
 

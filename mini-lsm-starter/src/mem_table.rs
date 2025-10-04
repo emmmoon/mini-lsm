@@ -28,7 +28,7 @@ use ouroboros::self_referencing;
 use crate::iterators::StorageIterator;
 use crate::key::KeySlice;
 use crate::table::SsTableBuilder;
-use crate::wal::Wal;
+use crate::wal::{self, Wal};
 
 /// A basic mem-table based on crossbeam-skiplist.
 ///
@@ -63,12 +63,24 @@ impl MemTable {
 
     /// Create a new mem-table with WAL
     pub fn create_with_wal(_id: usize, _path: impl AsRef<Path>) -> Result<Self> {
-        unimplemented!()
+        Ok(Self {
+            map: Arc::new(SkipMap::new()),
+            wal: Some(wal::Wal::create(&_path)?),
+            id: _id,
+            approximate_size: Arc::new(AtomicUsize::new(0)),
+        })
     }
 
     /// Create a memtable from WAL
     pub fn recover_from_wal(_id: usize, _path: impl AsRef<Path>) -> Result<Self> {
-        unimplemented!()
+        let map = Arc::new(SkipMap::new());
+        let wal = wal::Wal::recover(&_path, &map)?;
+        Ok(Self {
+            map,
+            wal: Some(wal),
+            id: _id,
+            approximate_size: Arc::new(AtomicUsize::new(0)),
+        })
     }
 
     pub fn for_testing_put_slice(&self, key: &[u8], value: &[u8]) -> Result<()> {
@@ -107,6 +119,9 @@ impl MemTable {
 
         self.approximate_size
             .fetch_add(estimatized_size, std::sync::atomic::Ordering::Relaxed);
+        if let Some(ref wal) = self.wal {
+            wal.put(_key, _value)?;
+        }
         Ok(())
     }
 

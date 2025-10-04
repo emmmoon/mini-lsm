@@ -110,7 +110,7 @@ impl TieredCompactionController {
             self.options.num_tiers,
             nums
         );
-        return Some(TieredCompactionTask {
+        Some(TieredCompactionTask {
             tiers: _snapshot
                 .levels
                 .iter()
@@ -118,7 +118,7 @@ impl TieredCompactionController {
                 .cloned()
                 .collect::<Vec<_>>(),
             bottom_tier_included: false,
-        });
+        })
     }
 
     pub fn apply_compaction_result(

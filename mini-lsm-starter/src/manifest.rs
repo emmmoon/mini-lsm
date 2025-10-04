@@ -15,15 +15,17 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
-use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
-
-use anyhow::Result;
-use parking_lot::{Mutex, MutexGuard};
-use serde::{Deserialize, Serialize};
+use std::{fs::File, io::Write};
 
 use crate::compact::CompactionTask;
+use anyhow::{Context, Ok, Result, bail};
+use bytes::{Buf, BufMut};
+use parking_lot::{Mutex, MutexGuard};
+use serde::{Deserialize, Serialize};
 
 pub struct Manifest {
     file: Arc<Mutex<File>>,
@@ -38,11 +40,45 @@ pub enum ManifestRecord {
 
 impl Manifest {
     pub fn create(_path: impl AsRef<Path>) -> Result<Self> {
-        unimplemented!()
+        Ok(Self {
+            file: Arc::new(Mutex::new(
+                OpenOptions::new()
+                    .read(true)
+                    .create_new(true)
+                    .write(true)
+                    .open(_path)
+                    .context("failed to create manifest")?,
+            )),
+        })
     }
 
     pub fn recover(_path: impl AsRef<Path>) -> Result<(Self, Vec<ManifestRecord>)> {
-        unimplemented!()
+        let mut file = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .open(_path)
+            .context("failed to recover manifest")?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+        let mut buf_ptr = buf.as_slice();
+        let mut records = Vec::new();
+        while buf_ptr.has_remaining() {
+            let len = buf_ptr.get_u64();
+            let slice = &buf_ptr[..len as usize];
+            let json = serde_json::from_slice::<ManifestRecord>(slice)?;
+            buf_ptr.advance(len as usize);
+            let checksum = buf_ptr.get_u32();
+            if checksum != crc32fast::hash(slice) {
+                bail!("manifest checksum mismatched!");
+            }
+            records.push(json);
+        }
+        Ok((
+            Self {
+                file: Arc::new(Mutex::new(file)),
+            },
+            records,
+        ))
     }
 
     pub fn add_record(
@@ -54,6 +90,15 @@ impl Manifest {
     }
 
     pub fn add_record_when_init(&self, _record: ManifestRecord) -> Result<()> {
-        unimplemented!()
+        let mut file = self.file.lock();
+        let mut buf = serde_json::to_vec(&_record)?;
+        let hash = crc32fast::hash(&buf);
+
+        file.write_all(&(buf.len() as u64).to_be_bytes())?;
+        buf.put_u32(hash);
+        file.write_all(buf.as_slice())?;
+        file.sync_all()?;
+
+        Ok(())
     }
 }

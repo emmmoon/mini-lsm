@@ -58,6 +58,8 @@ impl SsTableBuilder {
             last_key: KeyBytes::from_bytes(self.last_key.clone().into()),
         });
         self.data.append(&mut encoded_block.to_vec());
+        let checksum = crc32fast::hash(&encoded_block);
+        self.data.put_u32(checksum);
     }
 
     /// Adds a key-value pair to SSTable.
@@ -113,13 +115,13 @@ impl SsTableBuilder {
 
         let file = FileObject::create(path.as_ref(), buf)?;
         Ok(SsTable {
-            file: file,
+            file,
             block_meta: self.meta,
             block_meta_offset: meta_offset,
-            id: id,
+            id,
             block_cache: block_cache,
-            first_key: first_key,
-            last_key: last_key,
+            first_key,
+            last_key,
             bloom: Some(bloom),
             max_ts: 0,
         })

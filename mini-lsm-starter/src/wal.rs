@@ -15,13 +15,15 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
-use std::fs::File;
-use std::io::BufWriter;
+use std::fs::OpenOptions;
+use std::hash::Hasher;
+use std::io::{BufWriter, Read};
 use std::path::Path;
 use std::sync::Arc;
+use std::{fs::File, io::Write};
 
-use anyhow::Result;
-use bytes::Bytes;
+use anyhow::{Context, Ok, Result, bail};
+use bytes::{Buf, BufMut, Bytes};
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
 
@@ -31,15 +33,68 @@ pub struct Wal {
 
 impl Wal {
     pub fn create(_path: impl AsRef<Path>) -> Result<Self> {
-        unimplemented!()
+        Ok(Self {
+            file: Arc::new(Mutex::new(BufWriter::new(
+                OpenOptions::new()
+                    .read(true)
+                    .create_new(true)
+                    .write(true)
+                    .open(_path)
+                    .context("failed to create wal")?,
+            ))),
+        })
     }
 
     pub fn recover(_path: impl AsRef<Path>, _skiplist: &SkipMap<Bytes, Bytes>) -> Result<Self> {
-        unimplemented!()
+        let path = _path.as_ref();
+        let mut file = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .open(path)
+            .context("failed to open wal")?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+        let mut rbuf: &[u8] = &buf;
+        while rbuf.has_remaining() {
+            let mut hasher = crc32fast::Hasher::new();
+            let key_len = rbuf.get_u16() as usize;
+            hasher.write_u16(key_len as u16);
+            let key = Bytes::copy_from_slice(&rbuf[..key_len]);
+            hasher.write(&key);
+            rbuf.advance(key_len);
+            let value_len = rbuf.get_u16() as usize;
+            hasher.write_u16(value_len as u16);
+            let value = Bytes::copy_from_slice(&rbuf[..value_len]);
+            hasher.write(&value);
+            rbuf.advance(value_len);
+            let checksum = rbuf.get_u32();
+            if checksum != hasher.finalize() {
+                bail!("wal checksum mismatch");
+            }
+            _skiplist.insert(key, value);
+        }
+        Ok(Self {
+            file: Arc::new(Mutex::new(BufWriter::new(file))),
+        })
     }
 
     pub fn put(&self, _key: &[u8], _value: &[u8]) -> Result<()> {
-        unimplemented!()
+        let mut file = self.file.lock();
+        let mut buf: Vec<u8> = Vec::new();
+        let mut hasher = crc32fast::Hasher::new();
+        let key_len = _key.len();
+        hasher.write_u16(key_len as u16);
+        buf.put_u16(key_len as u16);
+        hasher.write(_key);
+        buf.put_slice(_key);
+        let value_len = _value.len();
+        hasher.write_u16(value_len as u16);
+        buf.put_u16(value_len as u16);
+        hasher.write(_value);
+        buf.put_slice(_value);
+        buf.put_u32(hasher.finalize());
+        file.write_all(&buf)?;
+        Ok(())
     }
 
     /// Implement this in week 3, day 5.
@@ -48,6 +103,9 @@ impl Wal {
     }
 
     pub fn sync(&self) -> Result<()> {
-        unimplemented!()
+        let mut file = self.file.lock();
+        file.flush()?;
+        file.get_mut().sync_all()?;
+        Ok(())
     }
 }

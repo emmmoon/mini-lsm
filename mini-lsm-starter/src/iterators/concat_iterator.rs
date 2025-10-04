@@ -39,7 +39,7 @@ impl SstConcatIterator {
             return Ok(Self {
                 current: None,
                 next_sst_idx: 0,
-                sstables: sstables,
+                sstables,
             });
         }
         let mut iter = Self {
@@ -61,7 +61,7 @@ impl SstConcatIterator {
             return Ok(Self {
                 current: None,
                 next_sst_idx: sstables.len(),
-                sstables: sstables,
+                sstables,
             });
         }
         let mut iter = Self {
