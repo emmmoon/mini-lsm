@@ -26,7 +26,7 @@ use crossbeam_skiplist::SkipMap;
 use ouroboros::self_referencing;
 
 use crate::iterators::StorageIterator;
-use crate::key::KeySlice;
+use crate::key::{KeySlice, TS_DEFAULT};
 use crate::table::SsTableBuilder;
 use crate::wal::{self, Wal};
 
@@ -155,7 +155,7 @@ impl MemTable {
     pub fn flush(&self, _builder: &mut SsTableBuilder) -> Result<()> {
         for entry in self.map.iter() {
             _builder.add(
-                KeySlice::from_slice(entry.key().chunk()),
+                KeySlice::from_slice(entry.key().chunk(), TS_DEFAULT),
                 entry.value().chunk(),
             );
         }
@@ -212,7 +212,7 @@ impl StorageIterator for MemTableIterator {
     }
 
     fn key(&'_ self) -> KeySlice<'_> {
-        KeySlice::from_slice(self.borrow_item().0.chunk())
+        KeySlice::from_slice(self.borrow_item().0.chunk(), TS_DEFAULT)
     }
 
     fn is_valid(&self) -> bool {

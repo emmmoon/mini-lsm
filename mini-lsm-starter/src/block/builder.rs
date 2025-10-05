@@ -51,10 +51,10 @@ impl BlockBuilder {
     fn compute_overlap(first_key: KeySlice, key: KeySlice) -> usize {
         let mut i = 0;
         loop {
-            if i >= first_key.len() || i >= key.len() {
+            if i >= first_key.key_len() || i >= key.key_len() {
                 break;
             }
-            if first_key.raw_ref()[i] != key.raw_ref()[i] {
+            if first_key.key_ref()[i] != key.key_ref()[i] {
                 break;
             }
             i += 1;
@@ -65,7 +65,7 @@ impl BlockBuilder {
     /// Adds a key-value pair to the block. Returns false when the block is full.
     #[must_use]
     pub fn add(&mut self, key: KeySlice, value: &[u8]) -> bool {
-        if self.estimated_size() + key.raw_ref().len() + value.len() + 6 > self.block_size
+        if self.estimated_size() + key.key_len() + value.len() + 6 > self.block_size
             && !self.is_empty()
         {
             return false;
@@ -77,9 +77,11 @@ impl BlockBuilder {
         // encode overlap length
         self.data.put_u16(overlap_len as u16);
         // encode not-overlap length
-        self.data.put_u16((key.len() - overlap_len) as u16);
+        self.data.put_u16((key.key_len() - overlap_len) as u16);
         // encode not-overlap part
-        self.data.put(&key.raw_ref()[overlap_len..]);
+        self.data.put(&key.key_ref()[overlap_len..]);
+        // encode ts
+        self.data.put_u64(key.ts());
         // encode value len
         self.data.put_u16(value.len() as u16);
         // encode value

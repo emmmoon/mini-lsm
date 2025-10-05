@@ -95,14 +95,18 @@ impl BlockIterator {
         // copy the current key to iterator
         let key = &data_slice[..key_len];
         self.key.clear();
-        self.key.append(&self.first_key.raw_ref()[..overlap_len]);
+        self.key.append(&self.first_key.key_ref()[..overlap_len]);
         self.key.append(key);
-        // get value len
         data_slice.advance(key_len);
+        // get ts
+        let ts = data_slice.get_u64();
+        self.key.set_ts(ts);
+        // get value len
         let val_len = data_slice.get_u16() as usize;
-        let value_begin = offset + key_len + 6;
+        let value_begin = offset + key_len + 6 + std::mem::size_of::<u64>();
         let value_end = value_begin + val_len;
         self.value_range = (value_begin, value_end);
+        data_slice.advance(val_len);
     }
 
     /// Seeks to the first key in the block.

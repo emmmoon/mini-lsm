@@ -45,7 +45,10 @@ impl Block {
         buf.get_u16();
         let key_len = buf.get_u16();
         let key = &buf[..key_len as usize];
-        KeyVec::from_vec(key.to_vec())
+        buf.advance(key_len as usize);
+        // get ts
+        let ts = buf.get_u64();
+        KeyVec::from_vec_with_ts(key.to_vec(), ts)
     }
 
     /// Decode from the data layout, transform the input `data` to a single `Block`
