@@ -35,23 +35,32 @@ type LsmIteratorInner = TwoMergeIterator<
 pub struct LsmIterator {
     inner: LsmIteratorInner,
     upper: Bound<Bytes>,
+    prev_key: Vec<u8>,
 }
 
 impl LsmIterator {
     pub(crate) fn new(iter: LsmIteratorInner, upper: Bound<Bytes>) -> Result<Self> {
-        let mut lsm = Self { inner: iter, upper };
+        let mut lsm = Self {
+            inner: iter,
+            upper,
+            prev_key: Vec::new(),
+        };
         if lsm.is_valid() && lsm.value().is_empty() {
-            lsm.next().unwrap();
+            lsm.prev_key = lsm.key().to_vec();
+            lsm.next()?;
+        }
+        if lsm.is_valid() {
+            lsm.prev_key = lsm.key().to_vec();
         }
         Ok(lsm)
     }
 
-    fn move_to_non_delete(&mut self) -> Result<()> {
-        while self.is_valid() && self.inner.value().is_empty() {
-            self.inner.next()?;
-        }
-        Ok(())
-    }
+    // fn move_to_non_delete(&mut self) -> Result<()> {
+    //     while self.is_valid() && self.inner.value().is_empty() {
+    //         self.inner.next()?;
+    //     }
+    //     Ok(())
+    // }
 }
 
 impl StorageIterator for LsmIterator {
@@ -81,8 +90,17 @@ impl StorageIterator for LsmIterator {
 
     fn next(&mut self) -> Result<()> {
         self.inner.next()?;
-        self.move_to_non_delete()?;
-        Ok(())
+        if self.inner.is_valid() {
+            if self.inner.value().is_empty() {
+                self.prev_key = self.key().to_vec();
+                return self.next();
+            }
+            if self.prev_key == self.key().to_vec() {
+                return self.next();
+            }
+            self.prev_key = self.key().to_vec();
+        }
+        return Ok(());
     }
 
     fn num_active_iterators(&self) -> usize {

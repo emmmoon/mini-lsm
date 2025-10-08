@@ -142,13 +142,14 @@ impl LsmStorageInner {
                 builder = Some(SsTableBuilder::new(self.options.block_size));
             }
             let builder_inner = builder.as_mut().unwrap();
-            if compact_to_bottom_level {
-                if !iter.value().is_empty() {
-                    builder_inner.add(iter.key(), iter.value());
-                }
-            } else {
-                builder_inner.add(iter.key(), iter.value());
-            }
+            // if compact_to_bottom_level {
+            //     if !iter.value().is_empty() {
+            //         builder_inner.add(iter.key(), iter.value());
+            //     }
+            // } else {
+            //     builder_inner.add(iter.key(), iter.value());
+            // }
+            builder_inner.add(iter.key(), iter.value());
             iter.next()?;
             if builder_inner.estimated_size() >= self.options.target_sst_size {
                 let sst_id = self.next_sst_id();
@@ -249,35 +250,21 @@ impl LsmStorageInner {
                 l0_sstables,
                 l1_sstables,
             } => {
-                let mut iters = Vec::with_capacity(l0_sstables.len() + l1_sstables.len());
-                for id in l0_sstables.iter().chain(l1_sstables.iter()) {
-                    iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
+                let mut l0_iters = Vec::with_capacity(l0_sstables.len());
+                for id in l0_sstables.iter() {
+                    l0_iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
                         snapshot.sstables.get(id).unwrap().clone(),
                     )?));
                 }
-                let mut merge_iter = MergeIterator::create(iters);
-                let mut builder = SsTableBuilder::new(self.options.block_size);
-                let mut new_sst = Vec::new();
-                while merge_iter.is_valid() {
-                    let key = merge_iter.key();
-                    let value = merge_iter.value();
-                    // empty, ignore
-                    if !value.is_empty() {
-                        builder.add(key, value);
-                    }
-                    merge_iter.next().unwrap();
-                    if builder.estimated_size() >= self.options.target_sst_size {
-                        let id = self.next_sst_id();
-                        let sst = builder.build(id, None, self.path_of_sst(id))?;
-                        new_sst.push(Arc::new(sst));
-                        builder = SsTableBuilder::new(self.options.block_size);
-                    }
+                let mut l1_iters1 = Vec::with_capacity(l1_sstables.len());
+                for id in l1_sstables.iter() {
+                    l1_iters1.push(snapshot.sstables.get(id).unwrap().clone());
                 }
-                let id = self.next_sst_id();
-                let sst = builder.build(id, None, self.path_of_sst(id))?;
-                new_sst.push(Arc::new(sst));
-
-                Ok(new_sst)
+                let iter = TwoMergeIterator::create(
+                    MergeIterator::create(l0_iters),
+                    SstConcatIterator::create_and_seek_to_first(l1_iters1)?,
+                )?;
+                self.compact_generate_sst_from_iter(iter, _task.compact_to_bottom_level())
             }
         }
     }
