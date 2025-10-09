@@ -34,50 +34,78 @@ type LsmIteratorInner = TwoMergeIterator<
 
 pub struct LsmIterator {
     inner: LsmIteratorInner,
-    upper: Bound<Bytes>,
+    end_bound: Bound<Bytes>,
     prev_key: Vec<u8>,
+    read_ts: u64,
+    is_valid: bool,
 }
 
 impl LsmIterator {
-    pub(crate) fn new(iter: LsmIteratorInner, upper: Bound<Bytes>) -> Result<Self> {
-        let mut lsm = Self {
+    pub(crate) fn new(
+        iter: LsmIteratorInner,
+        end_bound: Bound<Bytes>,
+        read_ts: u64,
+    ) -> Result<Self> {
+        let mut iter = Self {
+            is_valid: iter.is_valid(),
             inner: iter,
-            upper,
+            end_bound,
+            read_ts,
             prev_key: Vec::new(),
         };
-        if lsm.is_valid() && lsm.value().is_empty() {
-            lsm.prev_key = lsm.key().to_vec();
-            lsm.next()?;
-        }
-        if lsm.is_valid() {
-            lsm.prev_key = lsm.key().to_vec();
-        }
-        Ok(lsm)
+        iter.move_to_key()?;
+        Ok(iter)
     }
 
-    // fn move_to_non_delete(&mut self) -> Result<()> {
-    //     while self.is_valid() && self.inner.value().is_empty() {
-    //         self.inner.next()?;
-    //     }
-    //     Ok(())
-    // }
+    fn next_inner(&mut self) -> Result<()> {
+        self.inner.next()?;
+        if !self.inner.is_valid() {
+            self.is_valid = false;
+            return Ok(());
+        }
+        match self.end_bound.as_ref() {
+            Bound::Unbounded => {}
+            Bound::Included(key) => self.is_valid = self.inner.key().key_ref() <= key.as_ref(),
+            Bound::Excluded(key) => self.is_valid = self.inner.key().key_ref() < key.as_ref(),
+        }
+        Ok(())
+    }
+
+    fn move_to_key(&mut self) -> Result<()> {
+        loop {
+            while self.inner.is_valid() && self.inner.key().key_ref() == self.prev_key {
+                self.next_inner()?;
+            }
+            if !self.inner.is_valid() {
+                break;
+            }
+            self.prev_key.clear();
+            self.prev_key.extend(self.inner.key().key_ref());
+            while self.inner.is_valid()
+                && self.inner.key().key_ref() == self.prev_key
+                && self.inner.key().ts() > self.read_ts
+            {
+                self.next_inner()?;
+            }
+            if !self.inner.is_valid() {
+                break;
+            }
+            if self.inner.key().key_ref() != self.prev_key {
+                continue;
+            }
+            if !self.inner.value().is_empty() {
+                break;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl StorageIterator for LsmIterator {
     type KeyType<'a> = &'a [u8];
 
     fn is_valid(&self) -> bool {
-        if !self.inner.is_valid() {
-            return false;
-        }
-        match self.upper.as_ref() {
-            Bound::Included(upper) => {
-                return self.key() <= upper.chunk();
-            }
-            Bound::Excluded(upper) => return self.key() < upper.chunk(),
-            Bound::Unbounded => {}
-        }
-        true
+        self.is_valid
     }
 
     fn key(&self) -> &[u8] {
@@ -89,18 +117,9 @@ impl StorageIterator for LsmIterator {
     }
 
     fn next(&mut self) -> Result<()> {
-        self.inner.next()?;
-        if self.inner.is_valid() {
-            if self.inner.value().is_empty() {
-                self.prev_key = self.key().to_vec();
-                return self.next();
-            }
-            if self.prev_key == self.key().to_vec() {
-                return self.next();
-            }
-            self.prev_key = self.key().to_vec();
-        }
-        return Ok(());
+        self.next_inner()?;
+        self.move_to_key()?;
+        Ok(())
     }
 
     fn num_active_iterators(&self) -> usize {

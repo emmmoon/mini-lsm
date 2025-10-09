@@ -46,7 +46,11 @@ impl BlockMeta {
     /// Encode block meta to a buffer.
     /// You may add extra fields to the buffer,
     /// in order to help keep track of `first_key` when decoding from the same buffer in the future.
-    pub fn encode_block_meta(block_meta: &[BlockMeta], buf: &mut Vec<u8>) {
+    pub fn encode_block_meta(
+        block_meta: &[BlockMeta],
+        max_ts: u64,
+        #[allow(clippy::ptr_arg)] buf: &mut Vec<u8>,
+    ) {
         let original_len = buf.len();
         buf.put_u32(block_meta.len() as u32);
         for meta in block_meta {
@@ -58,11 +62,12 @@ impl BlockMeta {
             buf.put(meta.last_key.key_ref());
             buf.put_u64(meta.last_key.ts());
         }
+        buf.put_u64(max_ts);
         buf.put_u32(crc32fast::hash(&buf[original_len + 4..]));
     }
 
     /// Decode block meta from a buffer.
-    pub fn decode_block_meta(mut buf: &[u8]) -> Result<Vec<BlockMeta>> {
+    pub fn decode_block_meta(mut buf: &[u8]) -> Result<(Vec<BlockMeta>, u64)> {
         let meta_len = buf.get_u32();
         let checksum = crc32fast::hash(&buf[..(buf.remaining() - 4)]);
         let mut meta_vec: Vec<BlockMeta> = Vec::with_capacity(meta_len as usize);
@@ -84,10 +89,11 @@ impl BlockMeta {
                 last_key,
             });
         }
+        let max_ts = buf.get_u64();
         if buf.get_u32() != checksum {
             bail!("meta checksum mismatched");
         }
-        Ok(meta_vec)
+        Ok((meta_vec, max_ts))
     }
 }
 
@@ -163,7 +169,7 @@ impl SsTable {
         let block_meta_offset = (&file.read(len - 4, 4)?[..]).get_u32();
         let meta_len = len - 4 - block_meta_offset as u64;
         let meta_block = &file.read(block_meta_offset as u64, meta_len)?[..];
-        let block_meta = BlockMeta::decode_block_meta(meta_block)?;
+        let (block_meta, max_ts) = BlockMeta::decode_block_meta(meta_block)?;
         let first_key = block_meta.first().unwrap().first_key.clone();
         let last_key = block_meta.last().unwrap().last_key.clone();
 
@@ -176,7 +182,7 @@ impl SsTable {
             first_key,
             last_key,
             bloom: Some(bloom),
-            max_ts: 0,
+            max_ts: max_ts,
         })
     }
 

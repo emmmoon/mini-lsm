@@ -28,11 +28,31 @@ impl Watermark {
         }
     }
 
-    pub fn add_reader(&mut self, ts: u64) {}
+    pub fn add_reader(&mut self, ts: u64) {
+        let mut cnt: usize = 1;
+        if self.readers.contains_key(&ts) {
+            cnt += self.readers.get(&ts).unwrap();
+        }
+        self.readers.insert(ts, cnt);
+    }
 
-    pub fn remove_reader(&mut self, ts: u64) {}
+    pub fn remove_reader(&mut self, ts: u64) {
+        let cnt = self.readers.get_mut(&ts).unwrap();
+        *cnt -= 1;
+        if *cnt == 0 {
+            self.readers.remove(&ts);
+        }
+    }
 
     pub fn watermark(&self) -> Option<u64> {
-        Some(0)
+        if self.readers.is_empty() {
+            None
+        } else {
+            Some(*self.readers.first_key_value().unwrap().0)
+        }
+    }
+
+    pub fn num_retained_snapshots(&self) -> usize {
+        self.readers.len()
     }
 }
