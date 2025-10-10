@@ -15,7 +15,7 @@
 use std::ops::Bound;
 
 use anyhow::{Ok, Result, bail};
-use bytes::{Buf, Bytes};
+use bytes::Bytes;
 
 use crate::{
     iterators::{

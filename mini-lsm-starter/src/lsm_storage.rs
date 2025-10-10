@@ -576,8 +576,31 @@ impl LsmStorageInner {
         Ok(None)
     }
 
+    pub fn write_batch<T: AsRef<[u8]>>(
+        self: &Arc<Self>,
+        _batch: &[WriteBatchRecord<T>],
+    ) -> Result<()> {
+        if !self.options.serializable {
+            self.write_batch_inner(_batch)?;
+        } else {
+            let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
+            for record in _batch {
+                match record {
+                    WriteBatchRecord::Del(key) => {
+                        txn.delete(key.as_ref());
+                    }
+                    WriteBatchRecord::Put(key, value) => {
+                        txn.put(key.as_ref(), value.as_ref());
+                    }
+                }
+            }
+            txn.commit()?;
+        }
+        Ok(())
+    }
+
     /// Write a batch of data into the storage. Implement in week 2 day 7.
-    pub fn write_batch<T: AsRef<[u8]>>(&self, _batch: &[WriteBatchRecord<T>]) -> Result<()> {
+    pub fn write_batch_inner<T: AsRef<[u8]>>(&self, _batch: &[WriteBatchRecord<T>]) -> Result<u64> {
         let _lck = self.mvcc().write_lock.lock();
         let ts = self.mvcc().latest_commit_ts() + 1;
         for record in _batch {
@@ -608,17 +631,31 @@ impl LsmStorageInner {
             }
         }
         self.mvcc().update_commit_ts(ts);
-        Ok(())
+        Ok(ts)
     }
 
     /// Put a key-value pair into the storage by writing into the current memtable.
-    pub fn put(&self, _key: &[u8], _value: &[u8]) -> Result<()> {
-        self.write_batch(&[WriteBatchRecord::Put(_key, _value)])
+    pub fn put(self: &Arc<Self>, _key: &[u8], _value: &[u8]) -> Result<()> {
+        if !self.options.serializable {
+            self.write_batch_inner(&[WriteBatchRecord::Put(_key, _value)])?;
+        } else {
+            let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
+            txn.put(_key, _value);
+            txn.commit()?;
+        }
+        Ok(())
     }
 
     /// Remove a key from the storage by writing an empty value.
-    pub fn delete(&self, _key: &[u8]) -> Result<()> {
-        self.write_batch(&[WriteBatchRecord::Del(_key)])
+    pub fn delete(self: &Arc<Self>, _key: &[u8]) -> Result<()> {
+        if !self.options.serializable {
+            self.write_batch_inner(&[WriteBatchRecord::Del(_key)])?;
+        } else {
+            let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
+            txn.delete(_key);
+            txn.commit()?;
+        }
+        Ok(())
     }
 
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
